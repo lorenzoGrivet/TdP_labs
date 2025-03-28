@@ -1,0 +1,206 @@
+\section{Installation}\label{sec:installation}
+
+The APIS software is distributed as a single compressed archive for (64-bit) Windows and Linux platforms. The first operation is to unpack the zipped archive, which will produce the following top-level folder hierarchy, where \textttt{X} and \textttt{Y} are the version and subversion numbers of the particular distribution.
+\begin{lstlisting}[numbers=none]
+apis_vX.Y
+    bin
+    data
+    data_dist
+    doc
+    src
+    APIS_license.txt
+    setupAPISpath.m
+\end{lstlisting}
+The file \textttt{APIS\_license.txt} specifies the condition for using APIS software, the contents of this file are reported in Chapter~\ref{chap:license}. In short, APIS is owned by Politecnico di Torino and Intel has rights to use it without any additional obligation. Please refer to Chapter~\ref{chap:license} for details.
+
+Most of the APIS tools run in a MATLAB\footnote{A recent MATLAB installation is required, including the Control Systems Toolbox} environment, with the exception of the optimized APIS-Solver that needs to be compiled from source C-code. Details on the compilation process are provided in Chapter~\ref{chap:solver}. Pre-compiled binaries are provided in the APIS distribution for Windows and Rocky Linux 8 (binary compatible with Red Hat Enterprise Linux 8). These binaries are located, together with the required runtime libraries, in the folder \textttt{bin}. There is no need to recompile the APIS-Solver if the hardware/software environment is compatible with the above operating systems.
+
+In order to facilitate initial use of the APIS tools, pre-computed models and simulation results are distributed in the folder \textttt{data}. The testing scripts that are provided and documented below will overwrite these models. For this reason a backup copy of all data provided with this distribution is also included in folder \textttt{data\_dist}. This folder can be used for a quick recovery in case some useful model is accidentally deleted.
+
+This document is found in the \textttt{doc} folder, whereas all source code files (both MATLAB and C-code) are located in dedicated folders in the \textttt{src} folder.
+
+
+\section{Getting started}\label{sec:getting-started}
+
+The first operation to get started with APIS is to open a MATLAB instance, move to the top-level folder \textttt{apis\_vX.Y}, and run the script \textttt{setupAPISpath}.
+\begin{lstlisting}[numbers=none]
+>> setupAPISpath
+\end{lstlisting}
+This will add to the MATLAB search path the location of all MATLAB scripts and functions.
+
+For a quick start we consider the script \textttt{test\_tgl\_mor}, which applies APIS-MOR and APIS-Solver tools to the benchmark example codenamed TGL. The relevant sections of this script are reported and commented below.
+
+\begin{lstlisting}[numbers=none]
+load data/tgl/matlab/TGL_model.mat
+\end{lstlisting}
+The file \textttt{TGL\_model.mat} stores the PDN description of the TGL benchmark in the APIS format. This format is documented in Chapter~\ref{chap:MOR}. There is no need to run the APIS-Parser on this example, since the MATLAB PDN structure is stored in this file.
+
+\begin{lstlisting}[numbers=none]
+pdnmod = setupModels(pdnmodel,true);
+[redmod,mordata] = reducepdn(pdnmod);
+\end{lstlisting}
+
+The above two lines setup the PDN structure first, and then perform the model compression through APIS-MOR using all default options. These two functions are described in Chapter~\ref{chap:MOR} and provide the main top-level access to APIS-MOR. The reduced-order model \textttt{redmod} returned by the reduction routine can be simulated in time-domain.
+
+\begin{lstlisting}[numbers=none]
+[y,d,t] = simulatePDN(redmod);
+\end{lstlisting}
+
+The call above performs a transient simulation using a reference transient solver implemented in MATLAB, which is provided only for validation purposes. See Sec.~\ref{sec:solver-quick-start} to see how to run and validate the high-performance APIS-Solver.
+
+\begin{lstlisting}[numbers=none]
+tranData = load('data/tgl/matlab/TGL_tran_10A.mat');
+\end{lstlisting}
+
+For this particular structure, a reference HSPICE transient simulation of the full-size PDN is provided in the \textttt{data} folder. The above call reads the corresponding results, and the following lines plot the results.
+
+\begin{lstlisting}[numbers=none]
+tspice = tranData.tspice;
+yspice = tranData.yspice;
+
+% Interpolate solution on HSPICE grid
+yinterp = interp1(t,y.',tspice).';
+
+figure
+plot(tspice,yspice(1:36:end,:),'-b');
+hold on
+plot(tspice,yinterp(2:36:end,:),'--r');
+title('tol = default');
+xlabel('Time / s');
+ylabel('Load voltage / V');
+\end{lstlisting}
+
+The following lines plot the error between MATLAB and HSPICE results.
+
+\begin{lstlisting}[language=matlab]
+err = max(abs(yspice-yinterp(2:end,:)),[],1);
+
+figure
+plot(tspice,err);
+title('tol = default');
+xlabel('Time / s');
+ylabel('Error / V');
+\end{lstlisting}
+
+We now compute a different reduced-order model of the PDN structure to demonstrate some advanced features of the APIS-MOR tool. In particular, the following lines document how to assemble multiple nominal operating points corresponding to different DC current loading conditions, in order to represent with a better approximation (through an augmented projection basis) the nonlinear behavior of the regulated PDN.
+
+\begin{lstlisting}[numbers=none]
+% Define three operating points
+opts.u0 = [ pdnmod.Vin, zeros(1,144); 
+            pdnmod.Vin, -10/36*ones(1,36*2), zeros(1,36*(pdnmod.Nc-2));
+            pdnmod.Vin, -10/36*ones(1,144)].';
+\end{lstlisting}
+
+The above option defines three operating points in each of the three rows of \textttt{opts.u0}, respectively with all load currents of all cores to be zero (first row), cores~1-2 on with a nomimal per-core current of 10A equally distributed among the 36 loading ports of the two cores, and cores~3-4 off, and finally all four cores subject to the maximum load current.
+
+\begin{lstlisting}[numbers=none]
+% Set looser tolerance to 1e-3
+opts.tol = 1e-3;
+[redmod,mordata] = reducepdn(pdnmod,opts);
+
+% Run transient solution again
+[y,d,t] = simulatePDN(redmod);
+\end{lstlisting}
+
+The above lines also set a looser tolerance for API-MOR than the default tolerance (see Chapter~\ref{chap:MOR} for details on all options and corresponding defaults). Then, order reduction and transient simulation are performed. Figures are then plotted to report results, as before.
+
+\begin{lstlisting}[numbers=none]
+yinterp = interp1(t,y.',tspice).';
+
+figure
+plot(tspice,yspice(1:36:end,:),'-b');
+hold on
+plot(tspice,yinterp(2:36:end,:),'--r');
+xlabel('Time / s');
+ylabel('Load voltage / V');
+title('tol = 1e-3');
+
+err = max(abs(yspice-yinterp(2:end,:)),[],1);
+figure
+plot(tspice,err);
+xlabel('Time / s');
+ylabel('Error / V');
+title('tol = 1e-3');
+\end{lstlisting}
+
+If desired, the new reduced model can be saved to a MATLAB file. Please remember to use the option \textttt{'-v7.3'} to handle correctly large-size files.
+
+\begin{lstlisting}[numbers=none]
+save('data/tgl/matlab/tgl_reduced_model.mat','redmod','mordata','-v7.3');
+\end{lstlisting}
+
+Additional details and full documentation on APIS MOR and related data structures are provided in Chapter~\ref{chap:MOR}.
+
+\section{Running the APIS-Solver}\label{sec:solver-quick-start}
+
+Supposing that the TGL reduced-order model constructed by running the scripts in previous section is available, we show here how to execute the optimized APIS Solver on this model, instead of the slower MATLAB solver. The following code excerpts are taken from the MATLAB script \textttt{tests/test\_simulate\_tgl\_mor.m}, see the source code for full details.
+
+We start by loading model from the MATLAB file and converting the model structure to a HDF5 file suitable for the APIS Solver.
+
+\begin{lstlisting}[numbers=none]
+tgl_reduced_model = load('data/tgl/matlab/tgl_reduced_model.mat');
+writeHDF5(tgl_reduced_model.redmod, 'data/tgl/hdf5/tgl_reduced_model.h5');
+\end{lstlisting}
+
+The APIS Solver is executed with the following instructions, using the MATLAB wrapper \textttt{simulatePDN\_C}.
+
+\begin{lstlisting}[numbers=none]
+[serialTxt, serialData] = simulatePDN_C('data/tgl/hdf5/tgl_reduced_model.h5');
+\end{lstlisting}
+
+Since the only argument is the file storing the PDN structure to be simulated, all default options are used, in particular the non-parallelized APIS Solver running on a single thread, without any Waveform Relaxation partitioning. Changing runtime options will allow to run the simulation with different solvers, as illustrated below.
+
+\begin{lstlisting}[numbers=none]
+opts.ALGORITHM = 1;                 % choose WR-LP algorithm
+opts.MAX_STEP = 1e-4;               % set stop condition
+opts.ITERMAX = 20;                  % set maximum number of iterations
+opts.OMP_NUM_THREADS = 4;           % set n. of threads for parallel regions
+
+[wrlpTxt, wrlpData] = simulatePDN_C('data/tgl/hdf5/tgl_reduced_model.h5', opts);
+\end{lstlisting}
+
+Now two simulation results on the same model are available, one obtained with the serial solver and one with the WR-LP solver. The following lines load a reference HSPICE simulation of the same PDN structure, evaluate errors, and display timing and error results.
+
+\begin{lstlisting}[numbers=none]
+% load tgl reference simulation
+tranData = load('data/tgl/matlab/TGL_tran_10A.mat');
+t_spice = tranData.tspice;
+y_spice = tranData.yspice;
+
+% create time vectors (common for both serial and wrlp simulations)
+t = (0:(length(serialData.y))-1)*serialData.dt;
+
+% fit simulation on SPICE time array
+y_serial = interp1(t,(serialData.y(2:end, :)).',t_spice).';
+y_wrlp = interp1(t,(wrlpData.y(2:end, :)).',t_spice).';
+
+% evaluate errors
+err_serial = max(max(abs(y_serial-y_spice)));
+err_wrlp = max(max(abs(y_wrlp-y_spice)));
+err_ser_lp = max(max(abs(y_serial-y_wrlp)));
+
+% extract loop times
+serial_time = get_times_steps(serialTxt);
+wrlp_time = get_times_steps(wrlpTxt);
+
+% print errors and execution times
+fprintf("Error (C serial vs SPICE): %e\n", err_serial);
+fprintf("Error (C WR-LP vs SPICE): %e\n", err_wrlp);
+fprintf("Error (C serial vs C WR-LP): %e\n", err_ser_lp);
+fprintf("C serial execution time: %e\n", serial_time(1));
+fprintf("C WR-LP execution time: %e\n", wrlp_time(1));
+\end{lstlisting}
+
+Finally, some plots are produced.
+
+\begin{lstlisting}[numbers=none]
+% port to plot
+nport = 2; % selector of port voltage to plot
+figure 
+plot(t_spice,y_spice(nport,:),t_spice,y_serial(nport,:),t_spice,y_wrlp(nport,:));
+xlabel('Time [s]');
+ylabel(sprintf('Vo[%d] [V]', nport));
+legend(["SPICE", "C serial", "C WR-LP"]);
+\end{lstlisting}
+
+Additional details on APIS Solver and its full set of options are provided in Chapter~\ref{chap:solver}.
